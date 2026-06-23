@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Aurvia · Threshold Checker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 2.5rem; width: 100%; max-width: 540px; }
+    .header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; }
+    .logo { width: 38px; height: 38px; background: linear-gradient(135deg, #58a6ff, #1f6feb); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; }
+    .field { margin-bottom: 1.25rem; }
+    label { display: block; font-size: 0.82rem; color: #8b949e; margin-bottom: 0.4rem; text-transform: uppercase; }
+    input { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 0.95rem; padding: 0.6rem 0.85rem; outline: none; }
+    input:focus { border-color: #58a6ff; }
+    input::placeholder { color: #484f58; }
+    button { width: 100%; margin-top: 0.5rem; padding: 0.7rem; border: none; border-radius: 6px; background: linear-gradient(135deg, #1f6feb, #58a6ff); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .hint { font-size: 0.75rem; color: #484f58; margin-top: 0.35rem; }
+    .result { margin-top: 1.5rem; border-radius: 8px; padding: 1.2rem 1.4rem; display: none; }
+    .stable  { background: #0d2b1a; border: 1px solid #238636; }
+    .critical { background: #2d0f0f; border: 1px solid #da3633; }
+    .badge { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; margin-bottom: 0.8rem; }
+    .stable .badge { color: #3fb950; }
+    .critical .badge { color: #f85149; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .stat { font-size: 0.82rem; color: #8b949e; }
+    .stat span { color: #e6edf3; font-weight: 600; }
+    .error-box { margin-top: 1.25rem; background: #2d0f0f; border: 1px solid #da3633; border-radius: 8px; padding: 0.9rem; font-size: 0.87rem; color: #f85149; display: none; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="logo">A</div>
+    <div>
+      <h1 style="font-size:1.3rem">Threshold Checker</h1>
+      <p style="font-size:0.78rem;color:#8b949e">Aurvia Data Pipeline · Variance Analysis</p>
+    </div>
+  </div>
+  <div class="field">
+    <label>Stream Values</label>
+    <input type="text" id="valuesInput" placeholder="e.g. 10, 15, 22, 19, 8" />
+    <p class="hint">Enter numbers separated by commas</p>
+  </div>
+  <div class="field">
+    <label>Max Variance</label>
+    <input type="number" id="maxVariance" placeholder="e.g. 5" />
+    <p class="hint">Maximum allowed deviation from the mean</p>
+  </div>
+  <!-- No onclick here — event listener attached in JS below -->
+  <button id="checkBtn">Check Metrics</button>
+  <div class="error-box" id="errorBox"></div>
+  <div class="result" id="resultBox">
+    <div class="badge" id="statusLabel"></div>
+    <div class="stats">
+      <div class="stat">Mean: <span id="meanVal"></span></div>
+      <div class="stat">Max Variance: <span id="varVal"></span></div>
+      <div class="stat">Count: <span id="countVal"></span></div>
+      <div class="stat">Status: <span id="statusVal"></span></div>
+    </div>
+  </div>
+</div>
+<script>
+  const btn       = document.getElementById("checkBtn");
+  const errorBox  = document.getElementById("errorBox");
+  const resultBox = document.getElementById("resultBox");
+
+  // Attach listener once — this is the correct way, not onclick=""
+  btn.addEventListener("click", handleCheck);
+
+  async function handleCheck() {
+    // If already disabled, do nothing — this is the lock
+    if (btn.disabled) return;
+
+    // Lock immediately — before any async work
+    btn.disabled    = true;
+    btn.textContent = "Analysing…";
+    errorBox.style.display  = "none";
+    resultBox.style.display = "none";
+
+    try {
+      const parsed = document.getElementById("valuesInput").value
+        .split(",").map(s => s.trim()).filter(s => s !== "").map(Number);
+
+      const body = {
+        stream_values: parsed,
+        max_variance: parseFloat(document.getElementById("maxVariance").value)
+      };
+
+      // Small delay so button lock is clearly visible during rapid clicks
+      await new Promise(resolve => setTimeout(resolve, 600));
+
+      const response = await fetch("/api/threshold", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        errorBox.textContent   = "⚠ " + (data.detail || "Invalid input.");
+        errorBox.style.display = "block";
+      } else {
+        const isStable = data.status === "STABLE";
+        resultBox.className = "result " + (isStable ? "stable" : "critical");
+        document.getElementById("statusLabel").textContent = isStable ? "✔ STABLE" : "✖ CRITICAL";
+        document.getElementById("meanVal").textContent     = data.mean;
+        document.getElementById("varVal").textContent      = data.max_variance;
+        document.getElementById("countVal").textContent    = data.count;
+        document.getElementById("statusVal").textContent   = data.status;
+        resultBox.style.display = "block";
+      }
+    } catch(err) {
+      errorBox.textContent   = "⚠ Could not connect to the server.";
+      errorBox.style.display = "block";
+    } finally {
+      // Unlock only after everything is done
+      btn.disabled    = false;
+      btn.textContent = "Check Metrics";
+    }
+  }
+</script>
+</body>
+</html>
